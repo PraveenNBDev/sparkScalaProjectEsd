@@ -19,7 +19,7 @@ object Models {
                                cash_code:String,
                                msg_type_code:String,
                                acct_curr_cd:String,
-                               acct_curr_Amount:String,
+                               acct_curr_amount: BigDecimal,
                                orig_curr_cd:String,
                                orig_curr_amount:String,
                                cad_equivalent_amt:String,
@@ -53,8 +53,8 @@ object Models {
                                txn_status:String,
                                txn_type:String,
                                sndr_agt_name:String,
-                             //  utc_txn_date:String,
-                             //  utc_txn_time:String,
+                              // utc_txn_date:String,
+                              // utc_txn_time:String,
                                cust1_org_legal_name:String,
                                cust2_org_legal_name:String,
                                cust1_bank_name:String,
@@ -88,7 +88,7 @@ object Models {
                                      acceptance_date_time:Timestamp,
                                      msg_type_Code:String,
                                      currency:String,
-                                     amount: Double,
+                                     amount: BigDecimal,
                                      creditor_Account:String,
                                      payment_status:String,
                                      interac_ref_num:String,
@@ -119,13 +119,13 @@ object Models {
                             holding_branch_key:String,
                             product_type_code:String,
                             relation_type_Cd:String,
-                            amount_key:String,
+                            amount_key: String,
                             ecif_composite_key:String
                           )
 
   case class EsdlAccOpenDate(
                               ecif_composite_key:String,
-                              curr_plc_acc_num:String,
+                              curr_plc_acct_num:String,
                               holding_branch_key_source:String,
                               product_type_code: String
                             )
@@ -136,10 +136,9 @@ object Models {
                       source_cd:String,
                       target_cd:String,
                       effective_from:String,
-                      effectibve_to:String,
-                      source_json: SrcFiName,
-                      target_json:TgtFullName,
-                      effective_to:String
+                      effective_to:String,
+                      target_json: String,
+                      source_json: String
 
                     )
 
