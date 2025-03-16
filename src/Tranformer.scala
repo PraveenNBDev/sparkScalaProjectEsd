@@ -135,6 +135,16 @@ object Tranformer {
       .withColumn("execution_local_date_time", col("execution_local_date_time"))
       .withColumn("posting_date", to_date(from_utc_timestamp(col("acceptance_date_time"), "EST")))
       .withColumn("cash_code", lit("N"))
+      .withColumn("orig_curr_cash_amount", lit("0.00"))
+      .withColumn("cash_cad_equivalent_amt", lit("0.00"))
+      .withColumn("acct_to_cad_rate", lit("1"))
+      .withColumn("txn_to_acc_rate", lit("1"))
+      .withColumn("txn_to_cad_rate", lit("1"))
+      .withColumn("txn_curr_rate_ind", lit("TXN"))
+      .withColumn("orig_process_date", date_format(col("acceptance_date_time"), "yyyy-MM-dd"))
+      .withColumn("loaded_to_cerebro", lit("N"))
+      .withColumn("loaded_to_hunter", lit("Y"))
+      .withColumn("txn_tran_exchange_rate", lit("null"))
 
     // Lookup logic for instrg_agent_clearing_system
     val cust1Enriched = enrichedData
@@ -171,7 +181,7 @@ object Tranformer {
       col("source_transaction_id"),
       col("execution_local_date_time"),
       col("posting_date"),
-      col("msg_type_code1"),
+      col("msg_type_code1").as("msg_type_code"),
       col("acct_curr_cd"),
       col("acct_curr_amount"),
       col("orig_curr_cd"),
@@ -205,7 +215,7 @@ object Tranformer {
       col("user_session_date_time"),
       col("transaction_memo_line_1"),
       col("client_ip_addr"),
-      col("debtor_id1"),
+      col("debtor_id1").as("debtor_id"),
       col("addl_field_10"),
       col("addl_field_7"),
       col("addl_field_8"),
@@ -215,7 +225,17 @@ object Tranformer {
       col("source_system_cd"),
       col("channel_cd"),
       col("cr_dr_code"),
-      col("cash_code")
+      col("cash_code"),
+      col("orig_curr_cash_amount"),
+      col("cash_cad_equivalent_amt"),
+      col("acct_to_cad_rate"),
+      col("txn_to_acc_rate"),
+      col("txn_to_cad_rate"),
+      col("txn_curr_rate_ind"),
+      col("orig_process_date"),
+      col("loaded_to_cerebro"),
+      col("loaded_to_hunter"),
+      col("txn_tran_exchange_rate")
     )
 
     ds.show()
