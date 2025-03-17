@@ -10,7 +10,6 @@ object Tranformer {
   Logger.getLogger("org.spark_project").setLevel(Level.WARN)
   Logger.getLogger("org.spark_project").setLevel(Level.INFO)
 
-
   def joinEsdlWithCertapay(esdlTransactions: Dataset[EsdlTransaction], esdlRef: Dataset[EsdlRef])(stgCertapay: Dataset[StgCertPayAmlReport]):
   DataFrame = {
     val esdlOLB = esdlTransactions.filter(col("source_system_cd") === "OLB")
@@ -28,7 +27,6 @@ object Tranformer {
 
     // Build complex join conditions
     val joinCondition = {
-      // FI Reference condition
       val fiRefCondition = (
         (stgCertapayDs.col("transaction_id").isNotNull &&
           stgCertapayDs.col("transaction_id") === esdlTransactionsDs.col("source_transaction_id"))
@@ -77,7 +75,7 @@ object Tranformer {
       .withColumn("card_number", joinedDF("card_number"))
       .withColumn("account_number1", when(col("debtor_account").isNotNull, regexp_replace(functions.split(col("debtor_account"), "-")(2), "^0+", "")).otherwise(lit(null)))
       .withColumn("holding_branch_key1", when(col("debtor_account").isNotNull, regexp_replace(functions.split(col("debtor_account"), "-")(2), "^0+", "")).otherwise(lit(null)))
-      .withColumn("orig_process_date", lit("YYYY-MM-DD")) // Populate with fixed value as per rules
+      .withColumn("orig_process_date", lit("YYYY-MM-DD"))
       .withColumn("loaded_to_cerebro", lit("N"))
       .withColumn("loaded_to_hunter", lit("Y"))
       .withColumn("opp_account_number", when(col("creditor_account").isNotNull, regexp_replace(functions.split(col("creditor_account"), "-")(2), "^0+", "")).otherwise(lit(null)))
@@ -98,8 +96,8 @@ object Tranformer {
       .withColumn("txn_status", col("transaction_type"))
       .withColumn("txn_type", col("transaction_type_desc"))
       .withColumn("sndr_agt_name", col("debtor_name"))
-      .withColumn("utc_txn_date", date_format(col("acceptance_date_time"), "yyyy-MM-dd")) // Timestamps the date part of acceptance_date_time in UTC to target
-      .withColumn("utc_txn_time", date_format(col("acceptance_date_time"), "HH:mm:ss")) // Timeframe the time part of acceptance_date_time in UTC to target
+      .withColumn("utc_txn_date", date_format(col("acceptance_date_time"), "yyyy-MM-dd"))
+      .withColumn("utc_txn_time", date_format(col("acceptance_date_time"), "HH:mm:ss"))
       .withColumn("cust1_org_legal_name", col("debtor_legal_name"))
       .withColumn("cust2_org_legal_name", col("creditor_legal_name"))
       .withColumn("user_id", col("user_id")) // Join logic for user_id
@@ -235,15 +233,13 @@ object Tranformer {
       col("orig_process_date"),
       col("loaded_to_cerebro"),
       col("loaded_to_hunter"),
-      col("txn_tran_exchange_rate")
+      col("txn_tran_exchange_rate"),
+      col("row_update_date"),
+      col("processing_date")
     )
-
-    ds.show()
 
     ds
   }
-
-  println("--------------------------")
 
   def joinForAccountKey(
                          esdlTransactions: Dataset[EsdlTransaction],
@@ -402,8 +398,11 @@ object Tranformer {
     // Step 3: card_number is not null
     val step3 = esdlTransactionsDs
       .filter(col("card_number").isNotNull)
-      .join(esdlPartyProdDs, esdlTransactionsDs("card_number") === esdlPartyProdDs("account_number"), "left")
-      .filter(esdlPartyProdDs("relation_type_cd") === "1")
+      .join(esdlPartyProdDs, esdlTransactionsDs("card_number") === esdlPartyProdDs("account_number")
+        &&
+        (esdlTransactionsDs("holding_branch_key").isNull || esdlTransactionsDs("holding_branch_key") === esdlPartyProdDs("holding_branch_key")) &&
+        esdlPartyProdDs("product_type_code").isin("CARD", "CC", "PCFC", "SVSA", "VISA", "PP", "PPC") &&
+        esdlPartyProdDs("relation_type_cd") === "1", "left")
       .select(
         col("account_number_esdl"),
         col("holding_branch_key_esdl"),
@@ -440,26 +439,17 @@ object Tranformer {
         col("card_number")
       )
 
-    import spark.implicits._
-    // Union the results
+
     val finalAccountKey = accountKey1.union(accountKey2).union(accountKey3).union(additionalLookup)
 
     val accountKeyForMerge = finalAccountKey.select(
       col("account_number_esdl").as("account_number"),
       col("account_key")
-    ).select(col("account_number"))
-
-    println("accountKeyForMerge")
-    accountKeyForMerge.show()
+    )
 
     accountKeyForMerge
 
   }
-
-  println("ecif...")
-
-  import org.apache.spark.sql.functions._
-  import org.apache.spark.sql.{Dataset, DataFrame, SparkSession}
 
   def deriveEcifCompositeKey(
                               esdlTransactionsDs: Dataset[_],
@@ -574,16 +564,178 @@ object Tranformer {
       .union(step2AdditionalLookup)
       .union(step3)
 
-    println("finalEcifCompositeKey")
-    finalEcifCompositeKey.show()
-
     val ecifCompositeKeyResult = finalEcifCompositeKey
       .select(
+        col("account_number"),
         col("ecif_composite_key_step1").as("ecif_composite_key")
       )
 
-    ecifCompositeKeyResult.show()
     ecifCompositeKeyResult
+  }
+
+  def deriveOrphInd(
+                     esdlTransactionsDs: Dataset[EsdlTransaction],
+                     esdlPartyProdDs: Dataset[EsdlPartyProd],
+                     esdlAccOpenDateDs: Dataset[EsdlAccOpenDate]
+                   ): DataFrame = {
+
+    val step1 = esdlTransactionsDs
+      .filter(col("account_number").isNotNull)
+      .join(
+        esdlPartyProdDs,
+        esdlTransactionsDs("account_number") === esdlPartyProdDs("account_number") &&
+          (esdlTransactionsDs("holding_branch_key").isNotNull || esdlTransactionsDs("holding_branch_key") === esdlPartyProdDs("holding_branch_key")) &&
+          esdlPartyProdDs("product_type_code").isin("CARD", "CC", "PCFC", "SVSA", "VISA", "PP", "PPC", "PDEP", "DEP", "PLOA", "CL") &&
+          esdlPartyProdDs("relation_type_cd") === "1",
+        "left"
+      )
+      .select(
+        esdlTransactionsDs("account_number"),
+        esdlTransactionsDs("holding_branch_key"),
+        esdlTransactionsDs("opp_account_number"),
+        esdlTransactionsDs("opp_branch_key"),
+        esdlTransactionsDs("card_number"),
+        esdlTransactionsDs("orig_process_date"),
+        esdlPartyProdDs("party_key"),
+        esdlPartyProdDs("ecif_composite_key").as("ecif_composite_key_step1"),
+        lit("N").as("orph_ind") // Default to 'N' if party_key is found
+      )
+
+    // Additional lookup when party_key is null in step1
+    val step1AdditionalLookup = step1
+      .filter(col("party_key").isNull)
+      .join(
+        esdlAccOpenDateDs,
+        step1("account_number") === esdlAccOpenDateDs("curr_plc_acct_num") &&
+          step1("holding_branch_key").cast("int") === esdlAccOpenDateDs("holding_branch_key_source") &&
+          esdlAccOpenDateDs("product_type_code") === "CL",
+        "left"
+      )
+      .select(
+        step1("account_number"),
+        step1("holding_branch_key"),
+        step1("opp_account_number"),
+        step1("opp_branch_key"),
+        step1("card_number"),
+        step1("orig_process_date"),
+        esdlAccOpenDateDs("ecif_composite_key").as("ecif_composite_key_step1_additional"),
+        lit("P").as("orph_ind"),
+        lit("null")
+      )
+
+    val step2 = esdlTransactionsDs
+      .filter(col("account_number").isNull)
+      .join(
+        esdlPartyProdDs,
+        esdlTransactionsDs("opp_account_number") === esdlPartyProdDs("account_number") &&
+          (esdlTransactionsDs("opp_branch_key").isNull || esdlTransactionsDs("opp_branch_key") === esdlPartyProdDs("holding_branch_key")) &&
+          esdlPartyProdDs("product_type_code").isin("CARD", "CC", "PCFC", "SVSA", "VISA", "PP", "PPC", "PDEP", "DEP", "PLOA", "CL") &&
+          esdlPartyProdDs("relation_type_cd") === "1",
+        "left"
+      )
+      .select(
+        esdlTransactionsDs("account_number"),
+        esdlTransactionsDs("holding_branch_key"),
+        esdlTransactionsDs("opp_account_number"),
+        esdlTransactionsDs("opp_branch_key"),
+        esdlTransactionsDs("card_number"),
+        esdlTransactionsDs("orig_process_date"),
+        esdlPartyProdDs("party_key"),
+        esdlPartyProdDs("ecif_composite_key").as("ecif_composite_key_step2"),
+        when(col("party_key").isNotNull, lit("N")).otherwise(lit("Y")).as("orph_ind") // Set to 'N' or 'Y'
+      )
+
+    // Step 3: Handle orphan records where orph_ind = 'Y'
+    val step3 = esdlTransactionsDs
+      .filter(col("orph_ind") === "Y")
+      .join(
+        esdlPartyProdDs,
+        esdlTransactionsDs("account_number") === esdlPartyProdDs("account_number") &&
+          (esdlTransactionsDs("holding_branch_key").isNull || esdlTransactionsDs("holding_branch_key") === esdlPartyProdDs("holding_branch_key")) &&
+          esdlPartyProdDs("product_type_code").isin("CARD", "CC", "PCFC", "SVSA", "VISA", "PP", "PPC", "PDEP", "DEP", "PLOA", "CL") &&
+          esdlPartyProdDs("relation_type_cd") === "1",
+        "left"
+      )
+      .withColumn(
+        "orph_ind",
+        when(
+          col("party_key").isNotNull, lit("N") // Update to 'N' if party_key is found
+        ).otherwise(
+          when(
+            datediff(esdlTransactionsDs("processing_date"), col("orig_process_date")) + 1 <= 10,
+            col("orph_ind") // Keep 'Y' if age <= 10
+          ).otherwise(
+            lit("O") // Update to 'O' if age > 10
+          )
+        )
+      ).select(
+        esdlTransactionsDs("account_number"),
+        esdlTransactionsDs("holding_branch_key"),
+        esdlTransactionsDs("opp_account_number"),
+        esdlTransactionsDs("opp_branch_key"),
+        esdlTransactionsDs("card_number"),
+        esdlTransactionsDs("orig_process_date"),
+        esdlPartyProdDs("party_key"),
+        esdlPartyProdDs("ecif_composite_key"),
+        when(col("party_key").isNotNull, lit("N")).otherwise(lit("Y")).as("orph_ind") // Set to 'N' or 'Y'
+      )
+
+    // Step 4: Handle orphan records where orph_ind = 'Y' for opp_account_number
+    val step4 = esdlTransactionsDs
+      .filter(col("orph_ind") === "Y")
+      .join(
+        esdlPartyProdDs,
+        esdlTransactionsDs("opp_account_number") === esdlPartyProdDs("account_number") &&
+          (esdlTransactionsDs("opp_branch_key").isNull || esdlTransactionsDs("opp_branch_key") === esdlPartyProdDs("holding_branch_key")) &&
+          esdlPartyProdDs("product_type_code").isin("CARD", "CC", "PCFC", "SVSA", "VISA", "PP", "PPC", "PDEP", "DEP", "PLOA", "CL") &&
+          esdlPartyProdDs("relation_type_cd") === "1",
+        "left"
+      )
+      .withColumn(
+        "orph_ind",
+        when(
+          col("party_key").isNotNull, lit("N") // Update to 'N' if party_key is found
+        ).otherwise(
+          when(
+            datediff(esdlTransactionsDs("processing_Date"), col("orig_process_date")) + 1 <= 10,
+            col("orph_ind") // Keep 'Y' if age <= 10
+          ).otherwise(
+            lit("O") // Update to 'O' if age > 10
+          )
+        )
+      ).select(
+        esdlTransactionsDs("account_number"),
+        esdlTransactionsDs("holding_branch_key"),
+        esdlTransactionsDs("opp_account_number"),
+        esdlTransactionsDs("opp_branch_key"),
+        esdlTransactionsDs("card_number"),
+        esdlTransactionsDs("orig_process_date"),
+        esdlPartyProdDs("party_key"),
+        esdlPartyProdDs("ecif_composite_key").as("ecif_composite_key_step2"),
+        when(col("party_key").isNotNull, lit("N")).otherwise(lit("Y")).as("orph_ind") // Set to 'N' or 'Y'
+      )
+
+    // Combine all steps
+    val finalOrphInd = step1
+      .union(step1AdditionalLookup)
+      .union(step2)
+      .union(step3)
+      .union(step4)
+
+    // Select the final columns
+    val finalOrphIndResult = finalOrphInd.select(
+      col("account_number"),
+      col("holding_branch_key"),
+      col("opp_account_number"),
+      col("opp_branch_key"),
+      col("card_number"),
+      col("orig_process_date"),
+      col("orph_ind")
+    ).withColumn("orph_ind", coalesce(col("orph_ind"), lit("UNKNOWN")))
+      .select(col("account_number"),
+        col("orph_ind"))
+
+    finalOrphIndResult
   }
 
 }

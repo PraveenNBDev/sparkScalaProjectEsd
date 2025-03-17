@@ -53,8 +53,8 @@ object Models {
                                txn_status:String,
                                txn_type:String,
                                sndr_agt_name:String,
-                              // utc_txn_date:String,
-                              // utc_txn_time:String,
+                               utc_txn_date:Timestamp,
+                               utc_txn_time:Timestamp,
                                cust1_org_legal_name:String,
                                cust2_org_legal_name:String,
                                cust1_bank_name:String,
@@ -70,8 +70,8 @@ object Models {
                                fx_rate_exchange_rate:String,
                                addl_field_7:String,
                                addl_field_8:String,
-                               addl_field_9:String
-                               // row_update_date: Timestamp
+                               addl_field_9:String,
+                               row_update_date: Timestamp
                              )
 
   case class StgCertPayAmlReport(

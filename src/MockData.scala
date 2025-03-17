@@ -57,8 +57,8 @@ object MockData {
     txn_status = "COMPLETED",
     txn_type = "TRANSFER",
     sndr_agt_name = "Sender Agent",
-    //utc_txn_date = "2023-10-01",
-    //utc_txn_time = "12:00:00",
+    utc_txn_date = new Timestamp(System.currentTimeMillis()),
+    utc_txn_time = new Timestamp(System.currentTimeMillis()),
     cust1_org_legal_name = "Sender Corp",
     cust2_org_legal_name = "Recipient Corp",
     cust1_bank_name = "Bank of Sender",
@@ -75,7 +75,7 @@ object MockData {
     addl_field_7 = "Additional Field 7",
     addl_field_8 = "Additional Field 8",
     addl_field_9 = "Additional Field 9",
-   // row_update_date = new Timestamp(System.currentTimeMillis())
+   row_update_date = new Timestamp(System.currentTimeMillis())
   )
 
   // Mock data for StgCertPayAmlReport

@@ -1,9 +1,9 @@
-import Models.{EsdlAccOpenDate, EsdlPartyProd, EsdlRef, EsdlTransaction, StgCertPayAmlReport}
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.functions.current_date
 
 
 
-object CertTxnEtl extends App{
+  object CertTxnEtl extends App{
 
 
   val spark = SparkSession.builder()
@@ -31,5 +31,13 @@ object CertTxnEtl extends App{
   val esdlTxnWithAml = StgCertPayAmlReport.transform(Tranformer.joinEsdlWithCertapay(esdlTransactionDs, EsdlRefDs))
   val accountKeyForMerge = Tranformer.joinForAccountKey(esdlTransactionDs, EsdlPartyProdDs, EsdlAccOpenDateDs)
   val ecifCompKeyForMerge = Tranformer.deriveEcifCompositeKey(esdlTransactionDs, EsdlPartyProdDs, EsdlAccOpenDateDs)
-  esdlTxnWithAml.union(accountKeyForMerge).union(ecifCompKeyForMerge).show()
+  val deriveOrphIndForMerge = Tranformer.deriveOrphInd(esdlTransactionDs, EsdlPartyProdDs, EsdlAccOpenDateDs)
+
+
+    val finalDsMapped = esdlTxnWithAml.join(accountKeyForMerge, Seq("account_number"), "left")
+      .join(ecifCompKeyForMerge, Seq("account_number"), "left")
+      .join(deriveOrphIndForMerge, Seq("account_number"), "left")
+
+    finalDsMapped.show(false)
+    finalDsMapped.printSchema()
 }
