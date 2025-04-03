@@ -75,7 +75,8 @@ object MockData {
     addl_field_7 = "Additional Field 7",
     addl_field_8 = "Additional Field 8",
     addl_field_9 = "Additional Field 9",
-   row_update_date = new Timestamp(System.currentTimeMillis())
+   row_update_date = new Timestamp(System.currentTimeMillis()),
+    product_type_code = "CL"
   )
 
   // Mock data for StgCertPayAmlReport

@@ -238,7 +238,7 @@ object Tranformer {
       col("processing_date")
     )
 
-    ds
+    ds.distinct()
   }
 
   def joinForAccountKey(
@@ -251,6 +251,7 @@ object Tranformer {
     val esdlTransactionsDs = esdlTransactions
       .withColumn("account_number_esdl", col("account_number"))
       .withColumn("holding_branch_key_esdl", col("holding_branch_key"))
+      .withColumn("product_type_code_esdl", col("product_type_code"))
 
     val esdlPartyProdDs = esdlPartyProd.withColumn("product_type_code_prod", col("product_type_code"))
 
@@ -305,7 +306,7 @@ object Tranformer {
 
     // Additional lookup when party_key is null
     val ecifCompositeKey = esdlAccOpenDateDs
-      .join(esdlTransactionsDs, esdlAccOpenDateDs("product_type_code") === "CL")
+      .join(esdlTransactionsDs.drop(col("product_type_code")), esdlAccOpenDateDs("product_type_code") === "CL")
       .select(
         col("account_number_esdl"),
         col("holding_branch_key_esdl"),
@@ -439,15 +440,16 @@ object Tranformer {
         col("card_number")
       )
 
-
     val finalAccountKey = accountKey1.union(accountKey2).union(accountKey3).union(additionalLookup)
+    println("finalAccountKey")
+    finalAccountKey.show()
 
     val accountKeyForMerge = finalAccountKey.select(
       col("account_number_esdl").as("account_number"),
       col("account_key")
     )
 
-    accountKeyForMerge
+    accountKeyForMerge.distinct()
 
   }
 
@@ -570,7 +572,7 @@ object Tranformer {
         col("ecif_composite_key_step1").as("ecif_composite_key")
       )
 
-    ecifCompositeKeyResult
+    ecifCompositeKeyResult.distinct()
   }
 
   def deriveOrphInd(
@@ -735,7 +737,7 @@ object Tranformer {
       .select(col("account_number"),
         col("orph_ind"))
 
-    finalOrphIndResult
+    finalOrphIndResult.distinct()
   }
 
 }
