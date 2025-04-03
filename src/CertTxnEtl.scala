@@ -1,9 +1,6 @@
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.functions.current_date
 
-
-
-  object CertTxnEtl extends App{
+object CertTxnEtl extends App{
 
 
   val spark = SparkSession.builder()
@@ -34,10 +31,9 @@ import org.apache.spark.sql.functions.current_date
   val deriveOrphIndForMerge = Tranformer.deriveOrphInd(esdlTransactionDs, EsdlPartyProdDs, EsdlAccOpenDateDs)
 
 
-    val finalDsMapped = esdlTxnWithAml.join(accountKeyForMerge, Seq("account_number"), "left")
-      .join(ecifCompKeyForMerge, Seq("account_number"), "left")
-      .join(deriveOrphIndForMerge, Seq("account_number"), "left")
+    val finalDsMapped = esdlTxnWithAml.join(accountKeyForMerge, Seq("account_number", "holding_branch_key"), "left")
+      .join(ecifCompKeyForMerge, Seq("account_number", "holding_branch_key"), "left")
+      .join(deriveOrphIndForMerge, Seq("account_number", "holding_branch_key"), "left")
 
-    finalDsMapped.show(false)
-    finalDsMapped.printSchema()
+    finalDsMapped.dropDuplicates().show(false)
 }

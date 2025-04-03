@@ -30,26 +30,17 @@ object Tranformer {
       val fiRefCondition = (
         (stgCertapayDs.col("transaction_id").isNotNull &&
           stgCertapayDs.col("transaction_id") === esdlTransactionsDs.col("source_transaction_id"))
-          ||
+          &&
           (stgCertapayDs.col("transaction_id").isNull &&
             stgCertapayDs.col("cr_dr_ind") === "C" &&
             stgCertapayDs.col("instructing_agent_fi") =!= "CA000010" &&
             stgCertapayDs.col("account_servicer_reference") === esdlTransactionsDs.col("source_transaction_id"))
-        )
+        ) && (functions.abs(datediff(
+        to_date(esdlOLB("execution_local_date_time")),
+        to_date(stgCertapayDs("acceptance_date_time"))
+      )) <= 5)
 
       val amountCondition = stgCertapayDs.col("amount") === esdlTransactionsDs.col("orig_curr_amount")
-
-      /*
-      // Date window condition (±5 days)
-      val esdlDate = coalesce(
-        to_date(col("esdl.execution_local_date_time"),
-          lit("1970-01-01")))
-      val stgDate = coalesce(
-        to_date(col("stg.acceptance_date_time"),
-          lit("1970-01-01")))
-      val dateCondition = functions.abs(datediff(esdlDate, stgDate)) <= 5
-
-       */
 
       fiRefCondition && amountCondition
     }
@@ -446,6 +437,7 @@ object Tranformer {
 
     val accountKeyForMerge = finalAccountKey.select(
       col("account_number_esdl").as("account_number"),
+      col("holding_branch_key_esdl").as("holding_branch_key"),
       col("account_key")
     )
 
@@ -569,7 +561,8 @@ object Tranformer {
     val ecifCompositeKeyResult = finalEcifCompositeKey
       .select(
         col("account_number"),
-        col("ecif_composite_key_step1").as("ecif_composite_key")
+        col("ecif_composite_key_step1").as("ecif_composite_key"),
+        col("holding_branch_key")
       )
 
     ecifCompositeKeyResult.distinct()
@@ -735,7 +728,8 @@ object Tranformer {
       col("orph_ind")
     ).withColumn("orph_ind", coalesce(col("orph_ind"), lit("UNKNOWN")))
       .select(col("account_number"),
-        col("orph_ind"))
+        col("orph_ind"),
+        col("holding_branch_key"))
 
     finalOrphIndResult.distinct()
   }
