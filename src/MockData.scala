@@ -119,13 +119,24 @@ object MockData {
 
   // Mock data for EsdlPartyProd
   val mockEsdlPartyProd = Models.EsdlPartyProd(
-    party_key = "PARTY001",
+    party_key = "",
+    holding_branch_key = 12345,
     account_number = "123456789",
-    holding_branch_key = "001",
+    xref_sect_id = "aldhh",
+    relation_type_cd = "3",
+    owner_count = 234,
+    subprod_count = 3,
+    open_date = "2025-01-01",
+    do_not_display_ind = "Y",
     product_type_code = "CL",
-    relation_type_Cd = "1",
-    amount_key = "001-123456789",
-    ecif_composite_key = "ECIF123"
+    product_cd = "CD",
+    ccis_prod_cd = "sass",
+    crp_parent_prod_cd ="dladj",
+    src_bus_appl_id = "axax",
+    ecif_composite_key = "ECIF123",
+    account_key = "001-123456789",
+    row_update_date = new Timestamp(System.currentTimeMillis()),
+    processing_date = "2025-04-01"
   )
 
   // Mock data for EsdlAccOpenDate

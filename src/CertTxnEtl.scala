@@ -16,7 +16,6 @@ object CertTxnEtl extends App{
   val accOpenDate = MockData.mockEsdlAccOpenDate
   val ref = MockData.mockEsdlRef
   val ref1 = MockData.mockEsdlRef1
-  val config = MockData.mockPrmConfig
 
   val esdlTransactionDs = Seq(transaction).toDS()
   val StgCertPayAmlReport = Seq(amlReport).toDS()
@@ -25,15 +24,7 @@ object CertTxnEtl extends App{
   val EsdlRefDs = Seq(ref,ref1).toDS()
 
 
-  val esdlTxnWithAml = StgCertPayAmlReport.transform(Tranformer.joinEsdlWithCertapay(esdlTransactionDs, EsdlRefDs))
-  val accountKeyForMerge = Tranformer.joinForAccountKey(esdlTransactionDs, EsdlPartyProdDs, EsdlAccOpenDateDs)
-  val ecifCompKeyForMerge = Tranformer.deriveEcifCompositeKey(esdlTransactionDs, EsdlPartyProdDs, EsdlAccOpenDateDs)
-  val deriveOrphIndForMerge = Tranformer.deriveOrphInd(esdlTransactionDs, EsdlPartyProdDs, EsdlAccOpenDateDs)
+  val esdlTxnWithAml = Transformer.transformData(esdlTransactionDs, EsdlRefDs,  EsdlPartyProdDs, EsdlAccOpenDateDs, StgCertPayAmlReport)
 
-
-    val finalDsMapped = esdlTxnWithAml.join(accountKeyForMerge, Seq("account_number", "holding_branch_key"), "left")
-      .join(ecifCompKeyForMerge, Seq("account_number", "holding_branch_key"), "left")
-      .join(deriveOrphIndForMerge, Seq("account_number", "holding_branch_key"), "left")
-
-    finalDsMapped.dropDuplicates().show(false)
+  esdlTxnWithAml.dropDuplicates().show(false)
 }

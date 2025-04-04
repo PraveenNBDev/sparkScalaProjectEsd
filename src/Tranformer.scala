@@ -1,29 +1,43 @@
 import Models.{EsdlAccOpenDate, EsdlPartyProd, EsdlRef, EsdlTransaction, PrmConfig, StgCertPayAmlReport}
-import org.apache.spark.sql.functions.{coalesce, col, concat_ws, current_date, current_timestamp, date_format, datediff, from_utc_timestamp, get_json_object, lit, regexp_extract, regexp_replace, to_date, when}
-import org.apache.spark.sql.{DataFrame, Dataset, Encoder, SparkSession, functions}
+import org.apache.spark.sql.functions.{coalesce, col, concat_ws, current_date, current_timestamp, date_format, datediff, from_utc_timestamp, lit, regexp_replace, to_date, when}
+import org.apache.spark.sql.{DataFrame, Dataset, SparkSession, functions}
 
-object Tranformer {
+object Transformer {
 
   val spark: SparkSession = spark
+
   import org.apache.log4j.{Logger, Level}
+
   Logger.getLogger("org.apache.spark").setLevel(Level.ERROR)
   Logger.getLogger("org.spark_project").setLevel(Level.WARN)
   Logger.getLogger("org.spark_project").setLevel(Level.INFO)
 
-  def joinEsdlWithCertapay(esdlTransactions: Dataset[EsdlTransaction], esdlRef: Dataset[EsdlRef])(stgCertapay: Dataset[StgCertPayAmlReport]):
-  DataFrame = {
-    val esdlOLB = esdlTransactions.filter(col("source_system_cd") === "OLB")
+  def transformData(
+                     esdlTransactions: Dataset[EsdlTransaction],
+                     esdlRef: Dataset[EsdlRef],
+                     esdlPartyProd: Dataset[EsdlPartyProd],
+                     esdlAccOpenDateDs: Dataset[EsdlAccOpenDate],
+                     stgCertapay: Dataset[StgCertPayAmlReport]
+                   ): DataFrame = {
 
+    // Step 1: Join ESDL with Certapay data
+    val esdlOLB = esdlTransactions.filter(col("source_system_cd") === "OLB")
     val dateFormat = "yyyy-MM-dd"
 
-    val esdlTransactionsDs = esdlOLB.alias("esdl").withColumn("account_number_esdl", col("account_number"))
+    val esdlTransactionsDs = esdlOLB.alias("esdl")
+      .withColumn("account_number_esdl", col("account_number"))
       .withColumn("msg_type_code_esdl", col("msg_type_code"))
       .withColumn("holding_branch_key_esdl", col("holding_branch_key"))
-      .withColumn("account_key_prod", col("account_key"))
-    val stgCertapayDs = stgCertapay.alias("stg").withColumn("account_number_pay", col("account_number"))
+      .withColumn("account_key_esdl", col("account_key"))
+      .drop(col("account_key"))
+
+    val stgCertapayDs = stgCertapay.alias("stg")
+      .withColumn("account_number_pay", col("account_number"))
       .withColumn("debtor_id_pay", col("debtor_id"))
       .withColumn("account_key_pay", col("account_key"))
       .withColumn("product_type_code_pay", col("product_type_code"))
+      .withColumn("account_key_pay", col("account_key"))
+      .drop(col("account_key"))
 
     // Build complex join conditions
     val joinCondition = {
@@ -45,23 +59,25 @@ object Tranformer {
       fiRefCondition && amountCondition
     }
 
-    val joinedDF = esdlTransactionsDs.join(stgCertapayDs, joinCondition, "left")
+    val joinedDF = esdlTransactionsDs.join(stgCertapayDs, joinCondition, "left").dropDuplicates()
+    val accountKeyResult = deriveAccountKey(esdlTransactions, esdlPartyProd, esdlAccOpenDateDs).dropDuplicates()
+    val ecifCompositeKeyResult = deriveEcifCompositeKey(esdlTransactions, esdlPartyProd, esdlAccOpenDateDs).dropDuplicates()
+    val orphIndResult = deriveOrphInd(esdlTransactions, esdlPartyProd, esdlAccOpenDateDs).dropDuplicates()
 
-    joinedDF.select(
-      col("esdl.source_transaction_id"),
-      col("stg.transaction_id"),
-      col("esdl.execution_local_date_time"),
-      col("stg.acceptance_date_time"),
-      col("esdl.orig_curr_amount"),
-      col("stg.amount"),
-      col("stg.cr_dr_ind"),
-      col("stg.instructing_agent_fi"),
-      col("account_number_esdl"),
-      col("esdl.account_key")
-    )
-
-    import spark.implicits._
+    // Step 5: Enrich the joined data with all derived attributes
     val enrichedData = joinedDF
+      .join(accountKeyResult,
+        joinedDF("account_number_esdl") === accountKeyResult("account_number") &&
+          joinedDF("holding_branch_key_esdl") === accountKeyResult("holding_branch_key"),
+        "left")
+      .join(ecifCompositeKeyResult,
+        joinedDF("account_number_esdl") === ecifCompositeKeyResult("account_number") &&
+          joinedDF("holding_branch_key_esdl") === ecifCompositeKeyResult("holding_branch_key"),
+        "left")
+      .join(orphIndResult,
+        joinedDF("account_number_esdl") === orphIndResult("account_number") &&
+          joinedDF("holding_branch_key_esdl") === orphIndResult("holding_branch_key"),
+        "left")
       .withColumn("txn_id", when(col("cr_dr_ind") === "CRDT" && col("instructing_agent_fi") =!= "CA000010", col("account_servicer_reference")).otherwise(col("src_txn_id")))
       .withColumn("card_number", joinedDF("card_number"))
       .withColumn("account_number1", when(col("debtor_account").isNotNull, regexp_replace(functions.split(col("debtor_account"), "-")(2), "^0+", "")).otherwise(lit(null)))
@@ -91,7 +107,7 @@ object Tranformer {
       .withColumn("utc_txn_time", date_format(col("acceptance_date_time"), "HH:mm:ss"))
       .withColumn("cust1_org_legal_name", col("debtor_legal_name"))
       .withColumn("cust2_org_legal_name", col("creditor_legal_name"))
-      .withColumn("user_id", col("user_id")) // Join logic for user_id
+      .withColumn("user_id", col("user_id"))
       .withColumn("currency_conversion_rate", col("currency_conversion_rate"))
       .withColumn("user_device_type", col("user_device_type"))
       .withColumn("user_session_date_time", col("user_session_date_time"))
@@ -139,7 +155,7 @@ object Tranformer {
     val cust1Enriched = enrichedData
       .join(esdlRef, esdlRef("source_id") === lit("CERTAPAY") && esdlRef("typ") === lit("financial_institution_number") &&
         col("processing_date").between(esdlRef("effective_from"), esdlRef("effective_to")) &&
-        col("instrg_agent_clearing_system") ===  esdlRef("source_json"), "left") // will impliment json parsing later
+        col("instrg_agent_clearing_system") === esdlRef("source_json"), "left")
       .withColumn("cust1_bank_name", when(esdlRef("target_json").isNotNull, esdlRef("target_json")).otherwise(lit("UNKN")))
       .withColumn("source_system_cd", lit(null))
       .withColumn("target_cd", lit(null))
@@ -147,22 +163,24 @@ object Tranformer {
     val cust2Enriched = enrichedData
       .join(esdlRef, esdlRef("source_id") === lit("CERTAPAY") && esdlRef("typ") === lit("financial_institution_number") &&
         col("processing_date").between(esdlRef("effective_from"), esdlRef("effective_to")) &&
-        col("instr_agent_id") ===  esdlRef("source_json"), "left")
+        col("instr_agent_id") === esdlRef("source_json"), "left")
       .withColumn("cust2_bank_name", when(esdlRef("target_json").isNotNull, esdlRef("target_json")).otherwise(lit("UNKN")))
       .withColumn("source_system_cd", lit(null))
       .withColumn("target_cd", lit(null))
 
     val srcSysCdEnriched = enrichedData
       .join(esdlRef, col("processing_date").between(esdlRef("effective_from"), esdlRef("effective_to")), "left")
-      .withColumn("source_system_cd", when( esdlRef("typ").isin("source_system") && esdlRef("source_id").isin("RDM_DFLT")
+      .withColumn("source_system_cd", when(esdlRef("typ").isin("source_system") && esdlRef("source_id").isin("RDM_DFLT")
         && col("source_cd").isin("CERTAPAY") && col("processing_date").between(col("effective_from"), col("effective_to")), esdlRef("target_cd")).otherwise("UNKN"))
       .withColumn("instr_agent_id", lit(null))
       .withColumn("cust1_bank_name", lit(null))
       .withColumn("cust2_bank_name", lit(null))
 
-    val unionWithBothDs = cust1Enriched.union(cust2Enriched).union(srcSysCdEnriched)
+    val unionWithBothDs = cust1Enriched.union(cust2Enriched).union(srcSysCdEnriched).dropDuplicates()
+    val unionWithBothDs1 =  unionWithBothDs.drop(cust1Enriched("esdl.orph_ind"))
 
-    val ds = unionWithBothDs.select(
+    // Final selection and distinct
+    unionWithBothDs1.select(
       col("txn_id"),
       col("card_number"),
       col("account_number1").as("account_number"),
@@ -226,26 +244,31 @@ object Tranformer {
       col("loaded_to_hunter"),
       col("txn_tran_exchange_rate"),
       col("row_update_date"),
-      col("processing_date")
-    )
-
-    ds.distinct()
+      col("processing_date"),
+      col("account_key"), // From accountKeyResult
+      col("ecif_composite_key"), // From ecifCompositeKeyResult
+      col("orph_ind") // From orphIndResult
+    ).distinct()
   }
 
-  def joinForAccountKey(
-                         esdlTransactions: Dataset[EsdlTransaction],
-                         esdlPartyProd: Dataset[EsdlPartyProd],
-                         esdlAccOpenDateDs: Dataset[EsdlAccOpenDate]
-                       ): DataFrame = {
-
+  // Helper functions for the different derivation steps
+  private def deriveAccountKey(
+                                esdlTransactions: Dataset[EsdlTransaction],
+                                esdlPartyProd: Dataset[EsdlPartyProd],
+                                esdlAccOpenDateDs: Dataset[EsdlAccOpenDate]
+                              ): DataFrame = {
     // Step 1: account_number is not null
     val esdlTransactionsDs = esdlTransactions
       .withColumn("account_number_esdl", col("account_number"))
       .withColumn("holding_branch_key_esdl", col("holding_branch_key"))
       .withColumn("product_type_code_esdl", col("product_type_code"))
+      .withColumn("account_key_esdl1", col("account_key"))
+      .drop(col("account_key"))
 
-    val esdlPartyProdDs = esdlPartyProd.withColumn("product_type_code_prod", col("product_type_code"))
-
+    val esdlPartyProdDs = esdlPartyProd
+      .withColumn("product_type_code_prod", col("product_type_code"))
+      .withColumn("account_key_prod1", col("account_key"))
+      .drop(col("account_key"))
     val step1 = esdlTransactionsDs
       .filter(col("account_number_esdl").isNotNull)
       .join(esdlPartyProdDs, esdlTransactionsDs("account_number_esdl") === esdlPartyProdDs("account_number"), "left")
@@ -261,7 +284,7 @@ object Tranformer {
         col("product_type_code_prod"),
         col("relation_type_cd"),
         col("party_key"),
-        col("account_key"),
+        col("account_key_prod1"),
         lit("null").as("null_col1"),
         lit("null").as("null_col2"),
         lit("null").as("null_col3"),
@@ -272,8 +295,8 @@ object Tranformer {
 
     val accountKey1 = step1
       .withColumn(
-        "account_key",
-        when(col("party_key").isNotNull, col("account_key"))
+        "account_key1",
+        when(col("party_key").isNotNull, col("account_key_prod1"))
           .otherwise(
             when(
               col("holding_branch_key_esdl").isNotNull,
@@ -285,7 +308,7 @@ object Tranformer {
         col("holding_branch_key_esdl"),
         col("product_type_code_prod"),
         col("relation_type_cd"),
-        col("account_key"),
+        col("account_key1"),
         col("party_key"),
         lit("null").as("null_col1"),
         lit("null").as("null_col2"),
@@ -303,7 +326,7 @@ object Tranformer {
         col("holding_branch_key_esdl"),
         col("product_type_code"),
         lit("null").as("null_col1"),
-        col("account_key"),
+        col("account_key_esdl1"),
         lit("null").as("null_col2"),
         col("curr_plc_acct_num"),
         col("holding_branch_key_source"),
@@ -326,7 +349,7 @@ object Tranformer {
         col("holding_branch_key_esdl"),
         col("product_type_code_prod"),
         col("relation_type_cd"),
-        col("account_key"),
+        col("account_key_prod1"),
         col("party_key"),
         col("curr_plc_acct_num"),
         col("holding_branch_key_source"),
@@ -351,7 +374,7 @@ object Tranformer {
         col("holding_branch_key_esdl"),
         col("product_type_code_prod"),
         col("relation_type_cd"),
-        col("account_key"),
+        col("account_key_prod1"),
         col("party_key"),
         lit("null").as("null_col1"),
         lit("null").as("null_col2"),
@@ -365,7 +388,7 @@ object Tranformer {
     val accountKey2 = step2
       .withColumn(
         "account_key",
-        when(col("party_key").isNotNull, col("account_key"))
+        when(col("party_key").isNotNull, col("account_key_prod1"))
           .otherwise(
             when(
               col("opp_branch_key").isNotNull,
@@ -377,7 +400,7 @@ object Tranformer {
         col("holding_branch_key_esdl"),
         col("product_type_code_prod"),
         col("relation_type_cd"),
-        col("account_key"),
+        col("account_key_prod1"),
         col("party_key"),
         lit("null").as("null_col1"),
         lit("null").as("null_col2"),
@@ -400,7 +423,7 @@ object Tranformer {
         col("holding_branch_key_esdl"),
         col("product_type_code_prod"),
         col("relation_type_cd"),
-        col("account_key"),
+        col("account_key_prod1"),
         col("party_key"),
         lit("null").as("null_col1"),
         lit("null").as("null_col2"),
@@ -413,7 +436,7 @@ object Tranformer {
     val accountKey3 = step3
       .withColumn(
         "account_key1",
-        when(col("party_key").isNotNull, col("account_key"))
+        when(col("party_key").isNotNull, col("account_key_prod1"))
           .otherwise(concat_ws("-", lit("Orph"), col("card_number")))
       )
       .select(
@@ -421,7 +444,7 @@ object Tranformer {
         col("holding_branch_key_esdl"),
         col("product_type_code_prod"),
         col("relation_type_cd"),
-        col("account_key"),
+        col("account_key1"),
         col("party_key"),
         lit("null").as("null_col1"),
         lit("null").as("null_col2"),
@@ -432,24 +455,21 @@ object Tranformer {
       )
 
     val finalAccountKey = accountKey1.union(accountKey2).union(accountKey3).union(additionalLookup)
-    println("finalAccountKey")
-    finalAccountKey.show()
 
     val accountKeyForMerge = finalAccountKey.select(
       col("account_number_esdl").as("account_number"),
       col("holding_branch_key_esdl").as("holding_branch_key"),
-      col("account_key")
+      col("account_key1").as("account_key")
     )
 
     accountKeyForMerge.distinct()
-
   }
 
-  def deriveEcifCompositeKey(
-                              esdlTransactionsDs: Dataset[_],
-                              esdlPartyProdDs: Dataset[_],
-                              esdlAccOpenDateDs: Dataset[_]
-                            ): DataFrame = {
+  private def deriveEcifCompositeKey(
+                                      esdlTransactionsDs: Dataset[EsdlTransaction],
+                                      esdlPartyProdDs: Dataset[EsdlPartyProd],
+                                      esdlAccOpenDateDs: Dataset[EsdlAccOpenDate]
+                                    ): DataFrame = {
 
     val step1 = esdlTransactionsDs
       .filter(col("account_number").isNotNull)
@@ -566,22 +586,28 @@ object Tranformer {
       )
 
     ecifCompositeKeyResult.distinct()
+
   }
 
-  def deriveOrphInd(
-                     esdlTransactionsDs: Dataset[EsdlTransaction],
-                     esdlPartyProdDs: Dataset[EsdlPartyProd],
-                     esdlAccOpenDateDs: Dataset[EsdlAccOpenDate]
-                   ): DataFrame = {
+  private def deriveOrphInd(
+                             esdlTransactionsDs: Dataset[EsdlTransaction],
+                             esdlPartyProdDs: Dataset[EsdlPartyProd],
+                             esdlAccOpenDateDs: Dataset[EsdlAccOpenDate]
+                           ): DataFrame = {
 
     val step1 = esdlTransactionsDs
       .filter(col("account_number").isNotNull)
       .join(
         esdlPartyProdDs,
-        esdlTransactionsDs("account_number") === esdlPartyProdDs("account_number") &&
+        (esdlTransactionsDs("account_number") === esdlPartyProdDs("account_number") &&
           (esdlTransactionsDs("holding_branch_key").isNotNull || esdlTransactionsDs("holding_branch_key") === esdlPartyProdDs("holding_branch_key")) &&
           esdlPartyProdDs("product_type_code").isin("CARD", "CC", "PCFC", "SVSA", "VISA", "PP", "PPC", "PDEP", "DEP", "PLOA", "CL") &&
-          esdlPartyProdDs("relation_type_cd") === "1",
+          esdlPartyProdDs("relation_type_cd") === "1")
+        ||
+          col("card_number").isNotNull &&
+          esdlTransactionsDs("card_number") === esdlPartyProdDs("account_number") &&
+            esdlPartyProdDs("product_type_code").isin("CARD", "CC", "PCFC", "SVSA", "VISA", "PP", "PPC") &&
+            esdlPartyProdDs("relation_type_cd") === "1",
         "left"
       )
       .select(
@@ -614,7 +640,7 @@ object Tranformer {
         step1("card_number"),
         step1("orig_process_date"),
         esdlAccOpenDateDs("ecif_composite_key").as("ecif_composite_key_step1_additional"),
-        lit("P").as("orph_ind"),
+        lit("Y").as("orph_ind"),
         lit("null")
       )
 
@@ -719,19 +745,18 @@ object Tranformer {
 
     // Select the final columns
     val finalOrphIndResult = finalOrphInd.select(
-      col("account_number"),
-      col("holding_branch_key"),
-      col("opp_account_number"),
-      col("opp_branch_key"),
-      col("card_number"),
-      col("orig_process_date"),
-      col("orph_ind")
-    ).withColumn("orph_ind", coalesce(col("orph_ind"), lit("UNKNOWN")))
+        col("account_number"),
+        col("holding_branch_key"),
+        col("opp_account_number"),
+        col("opp_branch_key"),
+        col("card_number"),
+        col("orig_process_date"),
+        col("orph_ind")
+      ).withColumn("orph_ind", coalesce(col("orph_ind"), lit("UNKNOWN")))
       .select(col("account_number"),
         col("orph_ind"),
         col("holding_branch_key"))
 
-    finalOrphIndResult.distinct()
+    finalOrphIndResult
   }
-
 }

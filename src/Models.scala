@@ -115,13 +115,24 @@ object Models {
                                    )
 
   case class EsdlPartyProd(
-                            party_key:String,
-                            account_number:String,
-                            holding_branch_key:String,
-                            product_type_code:String,
-                            relation_type_Cd:String,
-                            amount_key: String,
-                            ecif_composite_key:String
+                            party_key: String,
+                            holding_branch_key: Int,
+                            account_number: String,
+                            xref_sect_id: String,
+                            relation_type_cd: String,
+                            owner_count: Int,
+                            subprod_count: Int,
+                            open_date: String,
+                            do_not_display_ind: String,
+                            product_type_code: String,
+                            product_cd: String,
+                            ccis_prod_cd: String,
+                            crp_parent_prod_cd: String,
+                            src_bus_appl_id: String,
+                            ecif_composite_key: String,
+                            account_key: String,
+                            row_update_date: Timestamp,
+                            processing_date: String
                           )
 
   case class EsdlAccOpenDate(
