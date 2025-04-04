@@ -23,7 +23,6 @@ object CertTxnEtl extends App{
   val EsdlAccOpenDateDs = Seq(accOpenDate).toDS()
   val EsdlRefDs = Seq(ref,ref1).toDS()
 
-
   val esdlTxnWithAml = Transformer.transformData(esdlTransactionDs, EsdlRefDs,  EsdlPartyProdDs, EsdlAccOpenDateDs, StgCertPayAmlReport)
 
   esdlTxnWithAml.dropDuplicates().show(false)

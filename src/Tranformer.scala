@@ -32,12 +32,7 @@ object Transformer {
       .drop(col("account_key"))
 
     val stgCertapayDs = stgCertapay.alias("stg")
-      .withColumn("account_number_pay", col("account_number"))
       .withColumn("debtor_id_pay", col("debtor_id"))
-      .withColumn("account_key_pay", col("account_key"))
-      .withColumn("product_type_code_pay", col("product_type_code"))
-      .withColumn("account_key_pay", col("account_key"))
-      .drop(col("account_key"))
 
     // Build complex join conditions
     val joinCondition = {
@@ -178,6 +173,7 @@ object Transformer {
 
     val unionWithBothDs = cust1Enriched.union(cust2Enriched).union(srcSysCdEnriched).dropDuplicates()
     val unionWithBothDs1 =  unionWithBothDs.drop(cust1Enriched("esdl.orph_ind"))
+      .drop(cust1Enriched("stg.account_key"))
 
     // Final selection and distinct
     unionWithBothDs1.select(
