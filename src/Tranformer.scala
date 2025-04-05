@@ -176,7 +176,7 @@ object Transformer {
       .drop(cust1Enriched("stg.account_key"))
 
     // Final selection and distinct
-    unionWithBothDs1.select(
+    unionWithBothDs1.drop(col("esdl.ecif_composite_key")).select(
       col("txn_id"),
       col("card_number"),
       col("account_number1").as("account_number"),
@@ -356,7 +356,7 @@ object Transformer {
       )
 
     // Step 2: account_number is null
-    val step2 = esdlTransactionsDs
+    val step2 = esdlTransactionsDs.drop(col("ecif_composite_key"))
       .filter(col("account_number_esdl").isNull)
       .join(esdlPartyProdDs, esdlTransactionsDs("opp_account_number") === esdlPartyProdDs("account_number"), "left")
       .filter(
@@ -407,7 +407,7 @@ object Transformer {
       )
 
     // Step 3: card_number is not null
-    val step3 = esdlTransactionsDs
+    val step3 = esdlTransactionsDs.drop(col("ecif_composite_key"))
       .filter(col("card_number").isNotNull)
       .join(esdlPartyProdDs, esdlTransactionsDs("card_number") === esdlPartyProdDs("account_number")
         &&

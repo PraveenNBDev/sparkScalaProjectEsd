@@ -72,7 +72,8 @@ object Models {
                                addl_field_8:String,
                                addl_field_9:String,
                                row_update_date: Timestamp,
-                               product_type_code: String
+                               product_type_code: String,
+                               ecif_composite_key: String
                              )
 
   case class StgCertPayAmlReport(
